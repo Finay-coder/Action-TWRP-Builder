@@ -1,4 +1,4 @@
-name: Recovery Build
+name: Recovery Buildd
 
 on:
   workflow_dispatch:

@@ -1,177 +1,104 @@
-name: X688B OrangeFox Cloud Builder
+name: X688B TWRP Builder
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      fox_branch:
-        description: "OrangeFox manifest branch"
-        required: true
-        default: "12.1"
-        type: choice
-        options: ["12.1", "14.1"]
-      device_tree_branch:
-        description: "Branch of the X688B device-tree repository"
-        required: true
-        default: "11"
-        type: string
-      clean_build:
-        description: "Start from a clean output directory"
-        required: true
-        default: true
-        type: boolean
 
 permissions:
   contents: read
 
-concurrency:
-  group: x688b-orangefox-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   build:
-    # Standard hosted runners may not have enough disk for a full Android build.
-    # Use a larger GitHub-hosted runner if your account/org provides one.
     runs-on: ubuntu-22.04
     timeout-minutes: 360
+
     env:
-      FOX_BRANCH: ${{ inputs.fox_branch }}
-      DEVICE_TREE_BRANCH: ${{ inputs.device_tree_branch }}
-      DEVICE_TREE_REPO: https://github.com/NeonzDump/twrp_infinix_X688B.git
       DEVICE: X688B
-      WORKSPACE: ${{ github.workspace }}
-      BUILD_DIR: ${{ github.workspace }}/orangefox
-      LOG_DIR: ${{ github.workspace }}/build-logs
+      DEVICE_TREE_BRANCH: "11"
+      PRODUCT: twrp_X688B-eng
 
     steps:
-      - name: Checkout builder
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Show runner capacity
-        shell: bash
+      - name: Install dependencies
         run: |
-          set -euxo pipefail
-          df -h
-          free -h
-          nproc
-
-      - name: Run compatibility preflight
-        shell: bash
-        run: |
-          set -euxo pipefail
-          chmod +x scripts/preflight.sh
-          scripts/preflight.sh
-
-      - name: Install build dependencies
-        shell: bash
-        run: |
-          set -euxo pipefail
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
-            git git-lfs gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev \
-            lib32z1-dev libelf-dev liblz4-tool libncurses-dev libsdl1.2-dev \
-            libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool \
-            squashfs-tools unzip x11proto-core-dev xsltproc zip zlib1g-dev \
-            python3 python-is-python3 openjdk-11-jdk
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl \
+            flex g++-multilib gcc-multilib git \
+            git-lfs gnupg gperf imagemagick \
+            lib32ncurses-dev lib32readline-dev \
+            lib32z1-dev libelf-dev liblz4-tool \
+            libncurses-dev libssl-dev libxml2 \
+            libxml2-utils lzop pngcrush python3 \
+            rsync squashfs-tools unzip zip \
+            zlib1g-dev openjdk-8-jdk
 
-      - name: Install repo tool
-        shell: bash
+      - name: Install repo
         run: |
-          set -euxo pipefail
-          mkdir -p "$HOME/bin"
-          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
-          chmod a+x "$HOME/bin/repo"
+          mkdir -p ~/bin
+          curl -fsSL \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o ~/bin/repo
+          chmod +x ~/bin/repo
           echo "$HOME/bin" >> "$GITHUB_PATH"
-          "$HOME/bin/repo" --version
 
-      - name: Sync OrangeFox sources
-        shell: bash
+      - name: Initialize TWRP
         run: |
-          set -euxo pipefail
-          mkdir -p "$LOG_DIR"
-          git clone --depth=1 https://gitlab.com/OrangeFox/sync.git "$WORKSPACE/fox-sync"
-          cd "$WORKSPACE/fox-sync"
-          ./orangefox_sync.sh --branch "$FOX_BRANCH" --path "$BUILD_DIR" 2>&1 | tee "$LOG_DIR/sync.log"
+          mkdir -p twrp
+          cd twrp
+          repo init --depth=1 \
+            -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
+            -b twrp-11
 
-      - name: Fetch X688B device tree and validate
-        shell: bash
+      - name: Sync source
         run: |
-          set -euxo pipefail
-          mkdir -p "$BUILD_DIR/device/infinix"
-          git clone --depth=1 --single-branch --branch "$DEVICE_TREE_BRANCH" \
-            "$DEVICE_TREE_REPO" "$BUILD_DIR/device/infinix/X688B" \
-            2>&1 | tee "$LOG_DIR/device-tree.log"
+          cd twrp
+          repo sync -c --no-clone-bundle \
+            --no-tags --optimized-fetch \
+            --prune --force-sync -j2
 
-          TREE="$BUILD_DIR/device/infinix/X688B"
-          test -s "$TREE/BoardConfig.mk"
-          test -s "$TREE/device.mk"
-          test -s "$TREE/twrp_X688B.mk"
-
-          # This is a TWRP tree, not a verified OrangeFox port. The build is
-          # attempted only as an experimental compatibility build.
-          echo "Device tree source: $DEVICE_TREE_REPO@$DEVICE_TREE_BRANCH"
-          echo "OrangeFox branch: fox_$FOX_BRANCH"
-          echo "WARNING: X688B tree has not been verified as an OrangeFox port."
-          grep -nE 'PRODUCT_NAME|PRODUCT_DEVICE' "$TREE/twrp_X688B.mk" || true
-
-      - name: Build OrangeFox
-        shell: bash
+      - name: Clone X688B tree
         run: |
-          set -euxo pipefail
-          cd "$BUILD_DIR"
-          export FOX_BUILD_DEVICE="$DEVICE"
-          export FOX_BUILD_TYPE="Alpha"
-          export FOX_VARIANT="Unofficial"
+          mkdir -p twrp/device/infinix
+
+          git clone --depth=1 \
+            -b "$DEVICE_TREE_BRANCH" \
+            https://github.com/NeonzDump/twrp_infinix_X688B.git \
+            twrp/device/infinix/X688B
+
+          test -s twrp/device/infinix/X688B/BoardConfig.mk
+          test -s twrp/device/infinix/X688B/AndroidProducts.mk
+          test -s twrp/device/infinix/X688B/twrp_X688B.mk
+
+      - name: Build recovery
+        run: |
+          cd twrp
+
           export ALLOW_MISSING_DEPENDENCIES=true
-          export OF_DISABLE_MIUI_SPECIFIC_FEATURES=1
-          export FOX_VANILLA_BUILD=1
           export USE_CCACHE=1
-          export CCACHE_EXEC=/usr/bin/ccache
-          mkdir -p "$LOG_DIR"
-          ccache -M 8G || true
 
           source build/envsetup.sh
-          lunch "twrp_${DEVICE}-eng"
-          mka adbd recoveryimage 2>&1 | tee "$LOG_DIR/build.log"
+          lunch "$PRODUCT"
 
-      - name: Collect build outputs
-        if: always()
-        shell: bash
-        run: |
-          set +e
-          mkdir -p "$WORKSPACE/artifacts"
-          find "$BUILD_DIR/out/target/product/$DEVICE" -maxdepth 2 \
-            -type f \( -iname '*OrangeFox*.img' -o -iname 'recovery.img' -o -iname '*OrangeFox*.zip' \) \
-            -exec cp -v {} "$WORKSPACE/artifacts/" \;
-          {
-            echo "Device: $DEVICE"
-            echo "OrangeFox branch: fox_$FOX_BRANCH"
-            echo "Device tree: $DEVICE_TREE_REPO@$DEVICE_TREE_BRANCH"
-            echo "Commit: $GITHUB_SHA"
-            echo "Runner: $RUNNER_OS / $RUNNER_ARCH"
-            echo
-            df -h
-          } > "$WORKSPACE/artifacts/BUILD-INFO.txt"
-          find "$WORKSPACE/artifacts" -maxdepth 1 -type f -printf '%f %s bytes\n'
+          mka -j2 recoveryimage 2>&1 | tee build.log
 
-      - name: Upload recovery artifacts
+      - name: Upload recovery
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: X688B-OrangeFox-${{ github.run_number }}
-          path: artifacts/*
+          name: X688B-TWRP
+          path: twrp/out/target/product/X688B/recovery.img
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload build logs (also on failure)
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: X688B-OrangeFox-logs-${{ github.run_number }}
+          name: X688B-TWRP-Logs
           path: |
-            build-logs/
-            artifacts/BUILD-INFO.txt
+            twrp/build.log
           if-no-files-found: warn
           retention-days: 14

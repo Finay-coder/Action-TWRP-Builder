@@ -1,176 +1,177 @@
-name: Recovery Build (Legacy)
+name: X688B OrangeFox Cloud Builder
 
 on:
   workflow_dispatch:
     inputs:
-      MANIFEST_URL:
-        description: 'MANIFEST_URL (if want to use SSH keys, use git@github.com:XXXXX)'
+      fox_branch:
+        description: "OrangeFox manifest branch"
         required: true
-        default: 'https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni'
-      MANIFEST_BRANCH:
-        description: 'MANIFEST_BRANCH'
+        default: "12.1"
+        type: choice
+        options: ["12.1", "14.1"]
+      device_tree_branch:
+        description: "Branch of the X688B device-tree repository"
         required: true
-        default: 'twrp-7.1'
-      DEVICE_TREE_URL:
-        description: 'DEVICE_TREE_URL'
+        default: "11"
+        type: string
+      clean_build:
+        description: "Start from a clean output directory"
         required: true
-        default: 'https://github.com/ycly2333/android_device_EEBBK_H3000S-twrp'
-      DEVICE_TREE_BRANCH:
-        description: 'DEVICE_TREE_BRANCH'
-        required: true
-        default: 'twrp-7.1'
-      DEVICE_PATH:
-        description: 'DEVICE_PATH'
-        required: true
-        default: 'device/EEBBK/H3000S'
-      COMMON_TREE_URL:
-        description: 'COMMON_TREE_URL (if no common tree, leave blank)'
-        required: false
-      COMMON_PATH:
-        description: 'COMMON_PATH (if no common tree, leave blank)'
-        required: false
-      DEVICE_NAME:
-        description: 'DEVICE_NAME'
-        required: true
-        default: 'H3000S'
-      MAKEFILE_NAME:
-        description: 'MAKEFILE_NAME'
-        required: true
-        default: 'omni_H3000S'
-      BUILD_TARGET:
-        description: 'BUILD_TARGET'
-        required: true
-        default: 'recovery'
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x688b-orangefox-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
-    if: github.event.repository.owner.id == github.event.sender.id
-    runs-on: ubuntu-20.04
-    permissions:
-      contents: write
+    # Standard hosted runners may not have enough disk for a full Android build.
+    # Use a larger GitHub-hosted runner if your account/org provides one.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    env:
+      FOX_BRANCH: ${{ inputs.fox_branch }}
+      DEVICE_TREE_BRANCH: ${{ inputs.device_tree_branch }}
+      DEVICE_TREE_REPO: https://github.com/NeonzDump/twrp_infinix_X688B.git
+      DEVICE: X688B
+      WORKSPACE: ${{ github.workspace }}
+      BUILD_DIR: ${{ github.workspace }}/orangefox
+      LOG_DIR: ${{ github.workspace }}/build-logs
+
     steps:
-    - name: Display Run Parameters
-      run: |
-        echo "::group::User Environment Variables"
-        echo "Manifest URL: ${{ github.event.inputs.MANIFEST_URL }}"
-        echo "Manifest Branch: ${{ github.event.inputs.MANIFEST_BRANCH }}"
-        echo "Device Tree URL: ${{ github.event.inputs.DEVICE_TREE_URL }}"
-        echo "Device Tree Branch: ${{ github.event.inputs.DEVICE_TREE_BRANCH }}"
-        echo "Device Path: ${{ github.event.inputs.DEVICE_PATH }}"
-        echo "Device Name: ${{ github.event.inputs.DEVICE_NAME }}"
-        echo "Makefile Name: ${{ github.event.inputs.MAKEFILE_NAME }}"
-        echo "Build Target: ${{ github.event.inputs.BUILD_TARGET }}.img"
-        echo "::endgroup::"
+      - name: Checkout builder
+        uses: actions/checkout@v4
 
-    # You might want to Checkout your repo first, but not mandatory
-    - name: Check Out
-      uses: actions/checkout@v4
+      - name: Show runner capacity
+        shell: bash
+        run: |
+          set -euxo pipefail
+          df -h
+          free -h
+          nproc
 
-    # Cleanup The Actions Workspace Using Custom Composite Run Actions
-    - name: Cleanup
-      uses: rokibhasansagar/slimhub_actions@main
-      # That's it! Now use your normal steps
+      - name: Run compatibility preflight
+        shell: bash
+        run: |
+          set -euxo pipefail
+          chmod +x scripts/preflight.sh
+          scripts/preflight.sh
 
-    - name: Prepare the environment
-      run: |
-        sudo apt update && sudo apt upgrade -y
-        DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
-            linux-modules-extra-$(uname -r) \
-            gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib \
-            libc6-dev lib32ncurses5-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils \
-            xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev \
-            libwxgtk3.0-gtk3-dev libxml2 lzop pngcrush schedtool squashfs-tools \
-            imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libncurses5 python3 tar
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            git git-lfs gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev \
+            lib32z1-dev libelf-dev liblz4-tool libncurses-dev libsdl1.2-dev \
+            libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool \
+            squashfs-tools unzip x11proto-core-dev xsltproc zip zlib1g-dev \
+            python3 python-is-python3 openjdk-11-jdk
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
 
-    - name: Install OpenJDK
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'zulu'
-        java-version: '11'
+      - name: Install repo tool
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod a+x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          "$HOME/bin/repo" --version
 
-    - name: Setup SSH Keys
-      if: ${{ startsWith(github.event.inputs.MANIFEST_URL, 'git@github.com') || 
-          startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@github.com') ||
-          startsWith(github.event.inputs.COMMON_TREE_URL, 'git@github.com') }}
-      uses: webfactory/ssh-agent@v0.9.0
-      with:
-          ssh-private-key: |
-            ${{ secrets.SSH_PRIVATE_KEY }}
+      - name: Sync OrangeFox sources
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$LOG_DIR"
+          git clone --depth=1 https://gitlab.com/OrangeFox/sync.git "$WORKSPACE/fox-sync"
+          cd "$WORKSPACE/fox-sync"
+          ./orangefox_sync.sh --branch "$FOX_BRANCH" --path "$BUILD_DIR" 2>&1 | tee "$LOG_DIR/sync.log"
 
-    - name: Install repo
-      run: |
-        mkdir ~/bin
-        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-        chmod a+x ~/bin/repo
-        sudo ln -sf ~/bin/repo /usr/bin/repo
+      - name: Fetch X688B device tree and validate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$BUILD_DIR/device/infinix"
+          git clone --depth=1 --single-branch --branch "$DEVICE_TREE_BRANCH" \
+            "$DEVICE_TREE_REPO" "$BUILD_DIR/device/infinix/X688B" \
+            2>&1 | tee "$LOG_DIR/device-tree.log"
 
-    - name: Initialize repo
-      run: |
-        mkdir workspace
-        cd workspace
-        echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
-        git config --global user.name "azwhikaru"
-        git config --global user.email "azwhikaru+37921907@github.com"
-        repo init --depth=1 -u ${{ github.event.inputs.MANIFEST_URL }} -b ${{ github.event.inputs.MANIFEST_BRANCH }}
-      id: pwd
+          TREE="$BUILD_DIR/device/infinix/X688B"
+          test -s "$TREE/BoardConfig.mk"
+          test -s "$TREE/device.mk"
+          test -s "$TREE/twrp_X688B.mk"
 
-    - name: Repo Sync
-      run: |
-        repo sync -j$(nproc --all) --force-sync
-      working-directory: workspace
+          # This is a TWRP tree, not a verified OrangeFox port. The build is
+          # attempted only as an experimental compatibility build.
+          echo "Device tree source: $DEVICE_TREE_REPO@$DEVICE_TREE_BRANCH"
+          echo "OrangeFox branch: fox_$FOX_BRANCH"
+          echo "WARNING: X688B tree has not been verified as an OrangeFox port."
+          grep -nE 'PRODUCT_NAME|PRODUCT_DEVICE' "$TREE/twrp_X688B.mk" || true
 
-    - name: Clone device tree
-      run: |
-        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      - name: Build OrangeFox
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd "$BUILD_DIR"
+          export FOX_BUILD_DEVICE="$DEVICE"
+          export FOX_BUILD_TYPE="Alpha"
+          export FOX_VARIANT="Unofficial"
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export OF_DISABLE_MIUI_SPECIFIC_FEATURES=1
+          export FOX_VANILLA_BUILD=1
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+          mkdir -p "$LOG_DIR"
+          ccache -M 8G || true
 
-    - name: Clone common tree
-      if: |
-        github.event.inputs.COMMON_TREE_URL != null
-        && github.event.inputs.COMMON_PATH != null
-      run: |
-        git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+          source build/envsetup.sh
+          lunch "twrp_${DEVICE}-eng"
+          mka adbd recoveryimage 2>&1 | tee "$LOG_DIR/build.log"
 
-    - name: Sync Device Dependencies
-      run: |
-        bash ${GITHUB_WORKSPACE}/scripts/convert.sh ${{ github.event.inputs.DEVICE_PATH }}/${{ steps.buildtree.outputs.value }}.dependencies
-        repo sync -j$(nproc --all)
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-      continue-on-error: true
+      - name: Collect build outputs
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$WORKSPACE/artifacts"
+          find "$BUILD_DIR/out/target/product/$DEVICE" -maxdepth 2 \
+            -type f \( -iname '*OrangeFox*.img' -o -iname 'recovery.img' -o -iname '*OrangeFox*.zip' \) \
+            -exec cp -v {} "$WORKSPACE/artifacts/" \;
+          {
+            echo "Device: $DEVICE"
+            echo "OrangeFox branch: fox_$FOX_BRANCH"
+            echo "Device tree: $DEVICE_TREE_REPO@$DEVICE_TREE_BRANCH"
+            echo "Commit: $GITHUB_SHA"
+            echo "Runner: $RUNNER_OS / $RUNNER_ARCH"
+            echo
+            df -h
+          } > "$WORKSPACE/artifacts/BUILD-INFO.txt"
+          find "$WORKSPACE/artifacts" -maxdepth 1 -type f -printf '%f %s bytes\n'
 
-    - name: Set Swap Space
-      uses: pierotofy/set-swap-space@master
-      with:
-        swap-size-gb: 12
+      - name: Upload recovery artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: X688B-OrangeFox-${{ github.run_number }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 7
 
-    - name: Switch to Python2
-      run: |
-        sudo apt -y install python
-        sudo rm -rf /usr/bin/python
-        sudo ln -s /usr/bin/python2 /usr/bin/python
-        # sudo ln -s /usr/bin/python3 /usr/bin/python3
-      continue-on-error: true
-
-    - name: Building recovery
-      run: |
-        source build/envsetup.sh
-        export ALLOW_MISSING_DEPENDENCIES=true
-        lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && make ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
-    - name: Upload to Release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: | 
-          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_TARGET }}.img
-          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/*.zip
-          workspace/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/*vendor*.img
-        name: ${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
-        tag_name: ${{ github.run_id }}
-        body: |
-          Manifest: ${{ github.event.inputs.MANIFEST_BRANCH }}
-          Device: ${{ github.event.inputs.DEVICE_NAME }}
-          Target: ${{ github.event.inputs.BUILD_TARGET }}.img
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload build logs (also on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: X688B-OrangeFox-logs-${{ github.run_number }}
+          path: |
+            build-logs/
+            artifacts/BUILD-INFO.txt
+          if-no-files-found: warn
+          retention-days: 14

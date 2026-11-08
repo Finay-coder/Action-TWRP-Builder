@@ -1,121 +1,78 @@
-## Automated TWRP compilation based on Github Action
+# X688B Android 11 Recovery Builder
 
-## Advertising
+GitHub Actions template untuk **audit donor recovery Android 11** dan membangun **TWRP 11 khusus Infinix Hot 11 Play X688B**.
 
-1. OrangeFox is [here](https://github.com/azwhikaru/Action-OFRP-Builder)
+> Ini bukan konverter ajaib yang bisa menjadikan image recovery dari HP apa pun langsung cocok untuk X688B. Kernel, DTB, fstab, partisi, input, dan konfigurasi hardware harus berasal dari target X688B. Repo donor dipakai sebagai referensi/audit; konfigurasi perangkat donor tidak disalin otomatis.
 
-## Notice
+## Target bawaan
 
-1. Github Actions service is **NOT** unlimited so to avoid waste, don't use unverified source code in this, the best used to automate builds of repositories that are already stabilized
+- Device: Infinix Hot 11 Play — `X688B`
+- Firmware target yang dimaksud: `V788 / XOS 7.6.0 / Android 11`
+- SoC: MediaTek `MT6765`
+- TWRP manifest: `twrp-11`
+- Device tree: [`NeonzDump/twrp_infinix_X688B`, branch `11`](https://github.com/NeonzDump/twrp_infinix_X688B/tree/11)
+- Recovery partition limit dari BoardConfig tree: `40,894,464` bytes
 
-2. Before you make any changes, make sure that the repository you are operating in belongs to you. **"Fork" if you want to commit code, otherwise use "Use this template"**
+Tree upstream menyetel boot image header v2 dan memakai kernel/DTB prebuilt. Workflow ini mengganti kernel dan DTB dengan yang diekstrak dari **stock boot.img target** sebelum kompilasi.
 
-3. issues and Pull Requests may **NOT** get a reply. If you think is really necessary, use email on my profile to contact me
+## Cara pasang di GitHub
 
-4. Python 2 in Debian (Ubuntu) has been **removed**. If you are working on Android 8.1 and below, use *Recovery Build (Legacy)*
+1. Download ZIP project ini, ekstrak.
+2. Buat repository GitHub baru, misalnya `x688b-recovery-builder`.
+3. Upload seluruh isi folder ini ke root repository. Pastikan folder `.github/workflows` ikut ter-upload.
+4. Buka tab **Actions** dan aktifkan GitHub Actions bila diminta.
+5. Pilih workflow **X688B Android 11 Recovery Builder** → **Run workflow**.
 
-5. Don't ask any questions about your source code, such as
-	- No rule to make ...
-	- Image ... out of size
+## Input saat Run workflow
 
-## Thanks to
+| Input | Isi |
+|---|---|
+| `mode` | `audit` untuk cek donor saja; `build` untuk kompilasi recovery |
+| `donor_github_url` | URL repo GitHub donor recovery/device tree Android 11. Boleh kosong |
+| `donor_branch` | Branch repo donor, misalnya `android-11`, `twrp-11`, atau `main` |
+| `donor_device_tree_path` | Opsional: path folder donor yang berisi `BoardConfig.mk`, misalnya `device/brand/codename` |
+| `target_build` | Label build target, isi `V788-XOS7.6.0-Android11` |
+| `stock_boot_url` | URL HTTPS langsung ke **stock boot.img V788**. Kosongkan bila file tersedia di `stock/boot.img` |
+| `stock_dtbo_url` | Opsional: URL HTTPS langsung ke `dtbo.img` stock V788 untuk mengganti DTBO bawaan tree |
 
-All contributors
+URL image harus URL unduhan langsung (contoh raw file/release asset), bukan halaman HTML GitHub. Repo donor harus publik dan URL berbentuk `https://github.com/OWNER/REPO`.
 
-## Parameter Description
+### Stock boot image wajib untuk build V788
 
-| Name                 | Description                                       | Example                                                      |
-| -------------------- | ------------------------------------------------- | ------------------------------------------------------------ |
-| `MANIFEST_URL`       | Source address                                    | https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git |
-| `MANIFEST_BRANCH`    | Source branch                                     | twrp-12.1                                                    |
-| `DEVICE_TREE_URL`    | Device address                                    | https://github.com/TeamWin/android_device_asus_I003D         |
-| `DEVICE_TREE_BRANCH` | Device branch                                     | android-12.1                                                 |
-| `DEVICE_PATH`        | Device location                                   | device/asus/I003D                                            |
-| `COMMON_TREE_URL`    | Common tree address                               | https://github.com/TeamWin/android_device_asus_sm8250-common |
-| `COMMON_PATH`        | Common tree location                              | device/asus/sm8250-common                                    |
-| `DEVICE_NAME`        | Model name                                        | I003D                                                        |
-| `MAKEFILE_NAME`      | Makefile name                                     | twrp_I003D                                                   |
-| `BUILD_TARGET`       | Build Target Partition (boot/recovery/vendorboot) | recovery                                                     |
+Taruh **boot.img stock/original yang belum dipatch Magisk** pada `stock/boot.img`, atau isi `stock_boot_url` ketika menjalankan workflow.
 
------
+Opsional: jika DTB tidak ikut terbungkus pada boot image, taruh DTB firmware V788 di `stock/dtb.img`. Bila tersedia `dtbo.img` V788, taruh di `stock/dtbo.img` atau isi `stock_dtbo_url`.
 
-## How to use
+Jangan gunakan `magisk_patched-*.img` sebagai sumber utama. Jangan mengunggah `userdata`, dump data pribadi, atau file yang berisi informasi akun.
 
-```
-For example, your username is: JohnSmith
-```
+## Output
 
-#### 0. If you want to commit code, click 'Fork' in the upper right corner of this repository
+Setiap run mengunggah artifact bernama `X688B-TWRP11-output`, berisi:
 
-![image](https://user-images.githubusercontent.com/37921907/177914706-c92476c5-7e14-4fb3-be94-0c8a11dae874.png)
+- `recovery.img` — hanya jika build berhasil dan ukuran lolos batas partisi
+- `build-report.md` — ringkasan target, commit, ukuran, hash, dan status
+- `donor-audit.md` — perbandingan parameter donor dan target (bila donor diisi)
+- `build.log` — log build untuk diagnosis
 
-#### 1. If you just want to use it simply, click 'Use this template' in the upper right corner of this repository
+Mode `audit` tidak mengompilasi Android; ini dipakai untuk menilai konfigurasi donor sebelum mencoba build.
 
-![image](https://github.com/azwhikaru/Action-TWRP-Builder/assets/37921907/fae6ce3c-bd4c-4bbe-8050-5dd29dff2522)
+## Yang tidak dilakukan otomatis
 
-#### 2. After waiting for the automatic redirection, you will see your own username
+- Tidak memindahkan seluruh ramdisk donor ke X688B.
+- Tidak menyalin kernel, DTB, fstab, partition map, SELinux policy, atau vendor blobs dari HP donor.
+- Tidak mematikan AVB, mengubah vbmeta, mem-format data, atau mem-flash partisi.
+- Tidak menjamin recovery bisa boot hanya karena proses kompilasi sukses.
 
-![image](https://user-images.githubusercontent.com/37921907/177915106-5bde6fc9-303c-479e-b290-22b48efd1e4e.png)
+Perbedaan layar/touch, storage encryption, MTP, ADB, fastbootd, recovery fstab, dan dynamic partition tetap perlu diuji pada perangkat target. Build V788 belum dapat disebut terverifikasi sampai boot dan fungsi recovery diuji dengan aman.
 
-#### 3. Change the [username and email](https://github.com/CaptainThrowback/Action-Recovery-Builder/blob/main/.github/workflows/Recovery%20Build.yml#L100-L101) in the workflow to reflect your Github credentials (optional)
+## Peringatan kompatibilitas
 
-## Setting up SSH Keys (optional)
+Device tree upstream adalah titik awal komunitas, bukan sertifikasi bahwa semua revisi firmware X688B identik. Build komunitas lain yang ditemukan menyebut pengujian pada firmware V865, bukan V788. Karena itu workflow meminta stock `boot.img` target untuk menyelaraskan kernel dan DTB; tetap periksa log dan cadangkan partisi penting sebelum eksperimen.
 
-#### 4. Go to Settings, then select Deploy keys and select "Add deploy key" button.
+**Jangan flash artifact hanya karena file bernama `recovery.img`.** Pastikan model, firmware, ukuran, header, dan partisi cocok. Jangan flash ke `boot` atau `recovery` berdasarkan tebakan. Build ini tidak menyediakan perintah flash otomatis.
 
-#### 5. On your Android device, install [Termux](https://github.com/termux/termux-app/releases)
+## Upstream / referensi teknis
 
-#### 6. Install openssh in Termux and generate ssh keys. (Do not use passphrase for keys)
-
-NOTE: When creating the deploy key for a repository like git@github.com:owner/repo.git or https://github.com/owner/repo, put that URL into the key comment. (Hint: Try ssh-keygen ... -C "git@github.com:owner/repo.git".)
-owner = your Github username
-
-```
-pkg install openssh
-ssh-keygen -t ed25519 -C "git@github.com:owner/Action-Recovery-Builder.git"
-```
-
-#### 7. Add the keys to your repo. In Termux, use the following commands:
-
-```
-cd /data/data/com.termux/files/usr/etc/ssh
-cat ssh_host_ed25519_key.pub
-```
-
-  Select and copy the key then paste in the box for Key.
-  You can name it whatever you choose for the title.
-
-#### 8. Now to add your private ssh key. Back in Termux:
-
-```
-cat ssh_host_ed25519_key
-```
-
-   Copy the output from Termux.
-
-   In your browser, select *Secrets* under the Security tab.
-   Select Actions
-   Select New repository secret
-   For the New secret name, it should be SSH_PRIVATE_KEY
-   Paste the output from ssh_host_ed25519_key into the Value box.
-   Then select Add secret.
-
-## Building the Recovery
-
-#### 9. Click 'Actions-Recovery Build'
-
-![image](https://user-images.githubusercontent.com/37921907/177915304-8731ed80-1d49-48c9-9848-70d0ac8f2720.png)
-
-#### 10. Click 'Run workflow' and fill in according to the above 'parameter description'
-
-![image](https://user-images.githubusercontent.com/37921907/177915346-71c29149-78fb-4a00-996f-5d84ffc9eb8c.png)
-
-#### 11. After filling in, click 'Run workflow' to start running
-
------
-
-## Compilation results
-
-Can be downloaded at [Release](../../releases)
-
------
+- X688B TWRP device tree: https://github.com/NeonzDump/twrp_infinix_X688B/tree/11
+- TWRP 11 manifest: https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp/tree/twrp-11
+- Android boot image header documentation: https://source.android.com/docs/core/architecture/bootloader/boot-image-header

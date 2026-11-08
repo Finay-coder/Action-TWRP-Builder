@@ -1,2 +1,6 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Do not commit large firmware files unless you intentionally want them in this repo.
+stock/boot.img
+stock/dtb.img
+stock/dtbo.img
+work/
+artifacts/

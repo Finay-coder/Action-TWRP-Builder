@@ -1,191 +1,104 @@
-name: Build - PBRP
+name: X688B Android 11 Recovery Builder
 
 on:
   workflow_dispatch:
     inputs:
-      MANIFEST_BRANCH:
-        description: 'Manifest Branch'
+      mode:
+        description: "audit = inspect donor only; build = compile TWRP 11 for X688B"
         required: true
-        default: ''
         type: choice
         options:
-        - android-12.1
-        - android-11.0
-        - android-9.0
-      DEVICE_TREE:
-        description: 'Custom Recovery Tree' # Your already made Device Tree for TWRP
+          - audit
+          - build
+        default: audit
+      donor_github_url:
+        description: "Optional public GitHub repo for Android 11 donor recovery/device tree"
+        required: false
+        type: string
+        default: ""
+      donor_branch:
+        description: "Donor repo branch"
+        required: false
+        type: string
+        default: "main"
+      donor_device_tree_path:
+        description: "Optional path inside donor repo containing BoardConfig.mk"
+        required: false
+        type: string
+        default: ""
+      target_build:
+        description: "Target firmware label"
         required: true
-        default: 'https://github.com/naden01/lekno-LH8n'
-      DEVICE_TREE_BRANCH:
-        description: 'Custom Recovery Tree Branch' # Your Device Tree Branch, make sure it's right.
-        required: true
-        default: 'Android-12'
-      DEVICE_PATH:
-        description: 'Specify your Device Path' # As is, just like your DEVICE_PATH in your BoardConfig.mk
-        required: true
-        default: 'device/tecno/LH8n'
-      DEVICE_NAME:
-        description: 'Specify your Device Codename' # As is, just like your PRODUCT_DEVICE in your device tree.
-        required: true
-        default: 'LH8n'
-      BUILD_TARGET:
-        description: 'Specify your Build Target' # Pick among boot, recovery and vendor_boot
-        required: true
-        default: 'vendorboot'
-        type: choice
-        options:
-        - boot
-        - recovery
-        - vendorboot
-      LDCHECK:
-        description: 'Path of blobs to check' # Use it know what kind of dependencies your missing for decryption blobs.
-        required: true
-        default: 'system/bin/qseecomd'
+        type: string
+        default: "V788-XOS7.6.0-Android11"
+      stock_boot_url:
+        description: "Optional direct HTTPS URL to original V788 stock boot.img; otherwise use stock/boot.img"
+        required: false
+        type: string
+        default: ""
+      stock_dtbo_url:
+        description: "Optional direct HTTPS URL to V788 stock dtbo.img"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  TZ: Asia/Jakarta
+  TARGET_BUILD: ${{ inputs.target_build }}
+  BUILD_MODE: ${{ inputs.mode }}
+  DONOR_GITHUB_URL: ${{ inputs.donor_github_url }}
+  DONOR_BRANCH: ${{ inputs.donor_branch }}
+  DONOR_DEVICE_TREE_PATH: ${{ inputs.donor_device_tree_path }}
+  STOCK_BOOT_URL: ${{ inputs.stock_boot_url }}
+  STOCK_DTBO_URL: ${{ inputs.stock_dtbo_url }}
 
 jobs:
   build:
-    name: Build PBRP by ${{ github.actor }}
-    runs-on: ubuntu-20.04
-    if: github.event.repository.owner.id == github.event.sender.id
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    permissions:
-      contents: write
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
     steps:
-    - name: Check Out
-      uses: actions/checkout@v4
+      - name: Checkout builder
+        uses: actions/checkout@v4
 
-    - name: Display Inputs
-      run: |
-        echo "Displaying variables/inputs."
-        echo "Manifest Branch: ${{ github.event.inputs.MANIFEST_BRANCH }}"
-        echo "Device Tree: ${{ github.event.inputs.DEVICE_TREE }}"
-        echo "Device Branch: ${{ github.event.inputs.DEVICE_TREE_BRANCH }}"
-        echo "Device Path: ${{ github.event.inputs.DEVICE_PATH }}"
-        echo "Device Name: ${{ github.event.inputs.DEVICE_NAME }}"
-        echo "Build Target: ${{ github.event.inputs.BUILD_TARGET }}image"
+      - name: Set up Java 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
 
-    - name: Cleanup
-      uses: rokibhasansagar/slimhub_actions@main
-      
-    - name: Set Swap Space
-      uses: pierotofy/set-swap-space@master
-      with:
-        swap-size-gb: 24
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/powershell \
+            /usr/local/lib/android/sdk/ndk /usr/local/lib/android/sdk/system-images \
+            /usr/local/lib/android/sdk/cmdline-tools || true
+          sudo docker system prune -af || true
+          df -h
 
-    - name: Prepare the environment
-      run: |
-        sudo apt update
-        sudo apt -y upgrade
-        sudo apt -y install gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib libc6-dev lib32ncurses5-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev libwxgtk3.0-gtk3-dev libxml2 lzop pngcrush schedtool squashfs-tools imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libtinfo5 libgflags-dev
-        sudo add-apt-repository universe
-        sudo apt -y install libncurses5
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex g++-multilib gcc-multilib \
+            git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32z1-dev \
+            liblz4-tool libncurses5-dev libsdl1.2-dev libssl-dev libxml2-utils \
+            lzop pngcrush rsync schedtool squashfs-tools unzip xmlstarlet \
+            xsltproc zip zlib1g-dev python-is-python3
 
-    - name: Install OpenJDK
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'zulu'
-        java-version: '8'
+      - name: Run donor audit / X688B build
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          bash scripts/build_x688b.sh 2>&1 | tee artifacts/build.log
 
-    - name: Install Git-Repo
-      run: |
-        mkdir ~/bin
-        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-        chmod a+x ~/bin/repo
-        sudo ln -sf ~/bin/repo /usr/bin/repo
-
-    - name: Initialize Repo
-      run: |
-        mkdir android-recovery
-        cd android-recovery
-        git config --global user.name "${{ github.actor }}"
-        git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
-        repo init --depth=1 -u https://github.com/PitchBlackRecoveryProject/manifest_pb.git -b ${{ github.event.inputs.MANIFEST_BRANCH }}
-        
-    - name: Repo Sync
-      run: |
-        cd android-recovery
-        repo sync -j$(nproc --all) --force-sync
-      
-    - name: Clone Device Tree
-      run: |
-        cd android-recovery
-        git clone ${{ github.event.inputs.DEVICE_TREE }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
-        cd ${{ github.event.inputs.DEVICE_PATH }}
-        echo "COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
-
-    - name: Check Build Makefile
-      run: |
-        cd android-recovery
-        if [ -f ${{ github.event.inputs.DEVICE_PATH }}/twrp_${{ github.event.inputs.DEVICE_NAME}}.mk ]; then
-            echo "DEVICE_MAKEFILE=twrp_${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
-        elif [ -f ${{ github.event.inputs.DEVICE_PATH }}/omni_${{ github.event.inputs.DEVICE_NAME}}.mk ]; then
-            echo "DEVICE_MAKEFILE=omni_${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
-        else
-            echo "No recovery makefile file found!"
-        fi
-      continue-on-error: true
-
-    - name: Install Python 2
-      if: github.event.inputs.MANIFEST_BRANCH != 'android-11.0' && github.event.inputs.MANIFEST_BRANCH != 'android-12.1'
-      run: |
-        sudo apt -y install python2
-        cd /usr/bin
-        sudo ln -sf python2 python
-
-    - name: Fixed Missing Fonts
-      run: |
-        cd android-recovery
-        cd external/noto-fonts/other
-        wget https://github.com/cd-Crypton/custom-recovery-extras/raw/main/missing-font.zip
-        unzip -o missing-font.zip
-
-    - name: Building Image
-      run: |
-        cd android-recovery
-        source build/envsetup.sh
-        export ALLOW_MISSING_DEPENDENCIES=true
-        lunch ${{ env.DEVICE_MAKEFILE }}-eng && mka pbrp
-      
-    - name: Set Build Date # Output will be use in Release
-      run: |
-        echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
-      
-    - name: Upload to Release (boot and becovery)
-      if: github.event.inputs.BUILD_TARGET == 'boot' || github.event.inputs.BUILD_TARGET == 'recovery'
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_TARGET }}.img
-          android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/PBRP*.zip
-        name: Unofficial PBRP for ${{ github.event.inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
-        tag_name: ${{ github.run_id }}
-        body: |
-          Build: ${{ github.event.inputs.MANIFEST_BRANCH }}
-          Device: [Device Tree/Branch](${{ github.event.inputs.DEVICE_TREE }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }})
-          Commit: Most recent [commit](${{ github.event.inputs.DEVICE_TREE }}/commit/${{ env.COMMIT_ID }}) during building.
-
-    - name: Upload to Release (if vendor_boot)
-      if: github.event.inputs.BUILD_TARGET == 'vendorboot'
-      uses: softprops/action-gh-release@v2
-      with:
-        files: |
-          android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/vendor_boot.img
-          android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/PBRP*.zip
-        name: Unofficial PBRP for ${{ github.event.inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
-        tag_name: ${{ github.run_id }}
-        body: |
-          Build: ${{ github.event.inputs.MANIFEST_BRANCH }}
-          Device: [Device Tree/Branch](${{ github.event.inputs.DEVICE_TREE }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }})
-          Commit: Most recent [commit](${{ github.event.inputs.DEVICE_TREE }}/commit/${{ env.COMMIT_ID }}) during building.
-
-    - name: Run LDCheck (Only if LDCHECK was set to check.)
-      if: github.event.inputs.LDCHECK == 'check'
-      run: |
-        cd tools
-        mv -n libneeds ${GITHUB_WORKSPACE}/android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery/root/
-        mv -n ldcheck ${GITHUB_WORKSPACE}/android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery/root/
-        cd ../android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery/root
-        python3 ldcheck -p system/lib64:vendor/lib64:system/lib:vendor/lib -d ${{ github.event.inputs.LDCHECK }}
-        echo "Done checking missing dependencies. Review, and reconfigure your tree."
-      continue-on-error: true
+      - name: Upload build and audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: X688B-TWRP11-output
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14
